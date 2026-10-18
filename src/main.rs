@@ -117,9 +117,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         .collect::<Result<Vec<_>, _>>()?;
 
     if let Some(spec) = &cli.capture {
-        let (scene, variant) = spec.split_once(':').ok_or("--capture expects <scene>:<variant>")?;
+        let (scene, variant) = spec
+            .split_once(':')
+            .ok_or("--capture expects <scene>:<variant>")?;
         let scene = SceneKind::parse(scene).ok_or_else(|| format!("unknown scene `{scene}`"))?;
-        let variant = Variant::parse(variant).ok_or_else(|| format!("unknown variant `{variant}`"))?;
+        let variant =
+            Variant::parse(variant).ok_or_else(|| format!("unknown variant `{variant}`"))?;
         let job = Job {
             scene,
             variant,
@@ -141,10 +144,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             .next()
             .and_then(|v| Variant::parse(v.trim()))
             .unwrap_or(Variant::NATIVE);
-        return Ok(match viewer::run(scenes[0], variant, cli.res, cli.out.clone()) {
-            AppExit::Success => ExitCode::SUCCESS,
-            AppExit::Error(code) => ExitCode::from(code.get()),
-        });
+        return Ok(
+            match viewer::run(scenes[0], variant, cli.res, cli.out.clone()) {
+                AppExit::Success => ExitCode::SUCCESS,
+                AppExit::Error(code) => ExitCode::from(code.get()),
+            },
+        );
     }
     let plan: Vec<(SceneKind, Vec<Variant>)> = scenes
         .iter()
@@ -204,7 +209,10 @@ fn select_scenes(spec: &str) -> Result<Vec<SceneKind>, String> {
         .map(|s| {
             SceneKind::parse(s.trim()).ok_or_else(|| {
                 let names: Vec<_> = SceneKind::ALL.iter().map(|k| k.info().name).collect();
-                format!("unknown scene `{s}` (expected all or one of {})", names.join(", "))
+                format!(
+                    "unknown scene `{s}` (expected all or one of {})",
+                    names.join(", ")
+                )
             })
         })
         .collect()
@@ -258,7 +266,10 @@ fn capture_all(cli: &Cli, plan: &[(SceneKind, Vec<Variant>)]) -> Result<usize, S
             if variant.dlss.is_some()
                 && let Some(status) = &dlss_unsupported
             {
-                println!("[{n}/{total}] {}/{variant}: skipped ({status})", scene.info().name);
+                println!(
+                    "[{n}/{total}] {}/{variant}: skipped ({status})",
+                    scene.info().name
+                );
                 let mut meta = placeholder_meta(&job);
                 meta.status = status.clone();
                 meta.write(&job.meta_path());
@@ -284,7 +295,9 @@ fn capture_all(cli: &Cli, plan: &[(SceneKind, Vec<Variant>)]) -> Result<usize, S
                     let status = Meta::read(&job.meta_path())
                         .map(|m| m.status)
                         .unwrap_or_else(|| "dlss-unsupported".into());
-                    eprintln!("DLSS unsupported here: {status}. Remaining DLSS variants are skipped.");
+                    eprintln!(
+                        "DLSS unsupported here: {status}. Remaining DLSS variants are skipped."
+                    );
                     dlss_unsupported = Some(status);
                 }
                 code => {
@@ -309,7 +322,12 @@ fn placeholder_meta(job: &Job) -> Meta {
         variant: job.variant.name(),
         variant_desc: job.variant.describe(),
         expected: job.scene.expected_for(&job.variant).into(),
-        pipeline: if job.scene.uses_deferred(&job.variant) { "deferred" } else { "forward" }.into(),
+        pipeline: if job.scene.uses_deferred(&job.variant) {
+            "deferred"
+        } else {
+            "forward"
+        }
+        .into(),
         output: job.res,
         ..Default::default()
     }
@@ -347,7 +365,12 @@ fn write_summary(out: &Path, results: &[SceneResult]) -> std::io::Result<()> {
                         Some(rr) => format!("{}x{} -> {}x{}", rr.x, rr.y, m.output.x, m.output.y),
                         None => String::from("-"),
                     };
-                    (m.status.clone(), res, m.pipeline.clone(), m.expected.clone())
+                    (
+                        m.status.clone(),
+                        res,
+                        m.pipeline.clone(),
+                        m.expected.clone(),
+                    )
                 }
                 None => ("not captured".into(), "-".into(), "-".into(), "-".into()),
             };

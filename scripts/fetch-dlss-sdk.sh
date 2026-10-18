@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Fetch the pinned NVIDIA DLSS SDK into vendor/DLSS (what .cargo/config.toml points DLSS_SDK at).
 #
-# dlss_wgpu 4.0.0 requires DLSS SDK v310.5.3. Only the parts the build and runtime need are
+# dlss_wgpu 6.0.0 requires DLSS SDK v310.9.1. Only the parts the build and runtime need are
 # checked out (headers, the Linux static lib, the release runtime .so, license + programming guide).
 # By fetching it you agree to the DLSS SDK license:
-#   https://github.com/NVIDIA/DLSS/blob/v310.5.3/LICENSE.txt
+#   https://github.com/NVIDIA/DLSS/blob/v310.9.1/LICENSE.txt
 set -euo pipefail
 
-VERSION="v310.5.3"
+VERSION="v310.9.1"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${DLSS_SDK_DEST:-$ROOT/vendor/DLSS}"
 STAMP="$DEST/.bevy_dlss_bench-$VERSION"

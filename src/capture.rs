@@ -49,7 +49,9 @@ impl Job {
         self.scene_dir.join(format!("{}.png", self.variant))
     }
     pub fn raw_path(&self) -> PathBuf {
-        self.scene_dir.join("raw").join(format!("{}.png", self.variant))
+        self.scene_dir
+            .join("raw")
+            .join(format!("{}.png", self.variant))
     }
     pub fn meta_path(&self) -> PathBuf {
         self.scene_dir.join(format!("{}.meta", self.variant))
@@ -89,7 +91,10 @@ pub fn run(job: Job) -> AppExit {
                 .disable::<WinitPlugin>(),
         )
         // Headless loop as fast as the GPU allows; nothing depends on wall-clock time.
-        .add_plugins((ScheduleRunnerPlugin::run_loop(Duration::ZERO), BenchCorePlugin))
+        .add_plugins((
+            ScheduleRunnerPlugin::run_loop(Duration::ZERO),
+            BenchCorePlugin,
+        ))
         .insert_resource(JobSlot(Some(job)))
         .add_systems(Startup, setup)
         .add_systems(Update, drive.run_if(resource_exists::<State>));
@@ -109,7 +114,12 @@ fn setup(
     mut exit: MessageWriter<AppExit>,
 ) {
     let job = slot.0.take().expect("setup runs once");
-    let mut meta = world::base_meta(job.scene, &job.variant, job.res, world::adapter_string(&adapter));
+    let mut meta = world::base_meta(
+        job.scene,
+        &job.variant,
+        job.res,
+        world::adapter_string(&adapter),
+    );
 
     if job.variant.dlss.is_some()
         && let Err(reason) = dlss.0
@@ -214,7 +224,10 @@ fn drive(
         state.quiet_frames = 0;
     }
     if state.frame > 20_000 {
-        error!("pipelines never settled ({} pending)", data.pipelines_pending);
+        error!(
+            "pipelines never settled ({} pending)",
+            data.pipelines_pending
+        );
         exit.write(AppExit::from_code(EXIT_TIMEOUT));
         return;
     }

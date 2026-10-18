@@ -107,7 +107,11 @@ fn probe_render_world(
     match views.iter().next() {
         Some((view, resolution_override)) => {
             data.has_override = resolution_override.is_some();
-            data.main_pass = Some(resolution_override.map(|o| o.0).unwrap_or(view.viewport.zw()));
+            data.main_pass = Some(
+                resolution_override
+                    .map(|o| o.0)
+                    .unwrap_or(view.viewport.zw()),
+            );
         }
         None => {
             data.has_override = false;
@@ -120,7 +124,10 @@ pub fn adapter_string(adapter: &RenderAdapterInfo) -> String {
     if adapter.driver_info.is_empty() {
         format!("{} ({:?})", adapter.name, adapter.backend)
     } else {
-        format!("{} ({:?}, {})", adapter.name, adapter.backend, adapter.driver_info)
+        format!(
+            "{} ({:?}, {})",
+            adapter.name, adapter.backend, adapter.driver_info
+        )
     }
 }
 
@@ -134,7 +141,12 @@ pub fn base_meta(scene: SceneKind, variant: &Variant, output: UVec2, adapter: St
         variant: variant.name(),
         variant_desc: variant.describe(),
         expected: scene.expected_for(variant).into(),
-        pipeline: if scene.uses_deferred(variant) { "deferred" } else { "forward" }.into(),
+        pipeline: if scene.uses_deferred(variant) {
+            "deferred"
+        } else {
+            "forward"
+        }
+        .into(),
         output,
         render: None,
         adapter,
@@ -144,7 +156,10 @@ pub fn base_meta(scene: SceneKind, variant: &Variant, output: UVec2, adapter: St
 }
 
 /// The renderer method must be set before the scene's materials are created.
-pub fn opaque_method(scene: SceneKind, variant: &Variant) -> bevy::pbr::DefaultOpaqueRendererMethod {
+pub fn opaque_method(
+    scene: SceneKind,
+    variant: &Variant,
+) -> bevy::pbr::DefaultOpaqueRendererMethod {
     if scene.uses_deferred(variant) {
         bevy::pbr::DefaultOpaqueRendererMethod::deferred()
     } else {
@@ -201,10 +216,14 @@ pub fn spawn_world(
     }
     #[cfg(feature = "dlss")]
     if let Some(mode) = variant.dlss {
-        commands.entity(camera).insert(bevy::anti_alias::dlss::Dlss {
-            perf_quality_mode: mode.to_bevy(),
-            ..default()
-        });
+        commands
+            .entity(camera)
+            .insert(bevy::anti_alias::dlss::Dlss::<
+                bevy::anti_alias::dlss::DlssSuperResolutionFeature,
+            > {
+                perf_quality_mode: mode.to_bevy(),
+                ..default()
+            });
     }
 
     let mut ctx = SceneCtx {
@@ -284,7 +303,9 @@ pub fn label_lines(meta: &Meta, variant: &Variant, frame: u32) -> Vec<String> {
         (Some(r), _) => res(r),
         (None, Some(mode)) => format!(
             "~{}",
-            res((meta.output.as_vec2() * mode.nominal_scale()).round().as_uvec2())
+            res((meta.output.as_vec2() * mode.nominal_scale())
+                .round()
+                .as_uvec2())
         ),
         (None, None) => res(meta.output),
     };
@@ -300,7 +321,7 @@ pub fn label_lines(meta: &Meta, variant: &Variant, frame: u32) -> Vec<String> {
         ),
         format!("Also on: {}", meta.features.join(", ")),
         format!("Expected: {}", meta.expected),
-        format!("Bevy 0.19.1 | {} | frame {frame}", meta.adapter),
+        format!("Bevy 0.20.0 | {} | frame {frame}", meta.adapter),
     ]
 }
 

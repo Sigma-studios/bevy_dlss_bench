@@ -3,7 +3,7 @@
 //! Each scene isolates a single feature: everything that is not needed to show the
 //! artefact is off (no shadows, SSAO, fog, ... unless that is the feature being tested).
 
-use std::f32::consts::{FRAC_PI_2, PI};
+use std::f32::consts::FRAC_PI_2;
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -12,9 +12,7 @@ use bevy::{
     math::Affine2,
     pbr::{DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion, ScreenSpaceReflections},
     prelude::*,
-    render::render_resource::{
-        Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
-    },
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
 use crate::variant::{DlssMode, Variant};
@@ -29,7 +27,6 @@ pub enum SceneKind {
     Ssr,
     Ssao,
     Fog,
-    Skybox,
     Taa,
 }
 
@@ -55,13 +52,12 @@ pub struct SceneInfo {
 }
 
 impl SceneKind {
-    pub const ALL: [SceneKind; 7] = [
+    pub const ALL: [SceneKind; 6] = [
         SceneKind::DeferredLighting,
         SceneKind::ClusteredLights,
         SceneKind::Ssr,
         SceneKind::Ssao,
         SceneKind::Fog,
-        SceneKind::Skybox,
         SceneKind::Taa,
     ];
 
@@ -119,9 +115,9 @@ impl SceneKind {
             SceneKind::Ssao => SceneInfo {
                 name: "ssao",
                 title: "4. SSAO",
-                feature: "SSAO compute passes dispatched and sampled with camera.physical_viewport_size",
-                expected: "contact occlusion misplaced, stretched or clipped: AO no longer hugs the box/wall \
-                           creases",
+                feature: "SSAO: dispatched over the full viewport, view-space rebuilt with pixel / view.viewport.zw",
+                expected: "contact occlusion has the wrong shape/strength: depth is unprojected as if the \
+                           frame were full size, so AO no longer hugs the box/wall creases",
                 eye: Vec3::new(3.8, 3.2, 4.8),
                 target: Vec3::new(-1.2, 0.6, -1.2),
                 ..base
@@ -139,19 +135,9 @@ impl SceneKind {
                 target: Vec3::new(0.6, 1.4, -20.0),
                 ..base
             },
-            SceneKind::Skybox => SceneInfo {
-                name: "skybox",
-                title: "6. Skybox (control: fixed in 0.20)",
-                feature: "skybox ray direction from view.viewport (bevy#25604 switches to main_pass_viewport)",
-                expected: "sky is zoomed/offset relative to the geometry: the cubemap seam no longer lines up \
-                           with the red marker post",
-                eye: Vec3::new(0.0, 1.4, 0.0),
-                target: Vec3::new(-1.0, 1.55, -1.0),
-                ..base
-            },
             SceneKind::Taa => SceneInfo {
                 name: "taa",
-                title: "7. TAA + DLSS (double jitter)",
+                title: "6. TAA + DLSS (double jitter)",
                 feature: "TemporalJitter written by both prepare_taa_jitter and prepare_dlss; TAA resolves DLSS output",
                 expected: "control: DLSS without TAA, thin wires stable",
                 expected_taa: "two jitter sequences fight over TemporalJitter and TAA re-resolves the upscaled \
@@ -195,6 +181,16 @@ impl SceneKind {
             }
         }
         out
+    }
+
+    /// The artefact this scene exists to show (for sheet headers and the index).
+    pub fn headline_expected(self) -> &'static str {
+        let info = self.info();
+        if info.temporal {
+            info.expected_taa
+        } else {
+            info.expected
+        }
     }
 
     /// Whether this variant renders opaque geometry through the deferred path.
@@ -258,7 +254,12 @@ impl SceneCtx<'_, '_, '_> {
         })
     }
 
-    fn spawn_mesh(&mut self, mesh: impl Into<Mesh>, material: Handle<StandardMaterial>, t: Transform) {
+    fn spawn_mesh(
+        &mut self,
+        mesh: impl Into<Mesh>,
+        material: Handle<StandardMaterial>,
+        t: Transform,
+    ) {
         let mesh = self.meshes.add(mesh);
         self.commands
             .spawn((Mesh3d(mesh), MeshMaterial3d(material), t));
@@ -273,7 +274,9 @@ impl SceneCtx<'_, '_, '_> {
             uv_transform: Affine2::from_scale(size / (2.0 * tile)),
             ..default()
         });
-        let mesh = self.meshes.add(Plane3d::default().mesh().size(size.x, size.y));
+        let mesh = self
+            .meshes
+            .add(Plane3d::default().mesh().size(size.x, size.y));
         self.commands
             .spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::IDENTITY));
     }
@@ -475,13 +478,41 @@ pub fn spawn_scene(kind: SceneKind, ctx: &mut SceneCtx) {
                 Transform::from_xyz(-3.05, 2.0, 6.9),
             );
             // Boxes pushed into the corner and against the walls, plus a stack.
-            ctx.spawn_mesh(Cuboid::new(1.0, 1.0, 1.0), warm.clone(), Transform::from_xyz(-2.5, 0.5, -2.5));
-            ctx.spawn_mesh(Cuboid::new(0.6, 0.6, 0.6), warm.clone(), Transform::from_xyz(-2.5, 1.3, -2.5));
-            ctx.spawn_mesh(Cuboid::new(1.2, 0.5, 0.7), warm.clone(), Transform::from_xyz(0.2, 0.25, -2.65));
-            ctx.spawn_mesh(Cuboid::new(0.5, 1.6, 0.5), warm.clone(), Transform::from_xyz(-2.75, 0.8, 0.6));
-            ctx.spawn_mesh(Cuboid::new(0.5, 0.5, 0.5), warm.clone(), Transform::from_xyz(1.6, 0.25, 0.4));
-            ctx.spawn_mesh(Cuboid::new(0.5, 0.5, 0.5), warm.clone(), Transform::from_xyz(2.1, 0.25, 0.4));
-            ctx.spawn_mesh(Cuboid::new(0.5, 0.5, 0.5), warm, Transform::from_xyz(1.85, 0.75, 0.4));
+            ctx.spawn_mesh(
+                Cuboid::new(1.0, 1.0, 1.0),
+                warm.clone(),
+                Transform::from_xyz(-2.5, 0.5, -2.5),
+            );
+            ctx.spawn_mesh(
+                Cuboid::new(0.6, 0.6, 0.6),
+                warm.clone(),
+                Transform::from_xyz(-2.5, 1.3, -2.5),
+            );
+            ctx.spawn_mesh(
+                Cuboid::new(1.2, 0.5, 0.7),
+                warm.clone(),
+                Transform::from_xyz(0.2, 0.25, -2.65),
+            );
+            ctx.spawn_mesh(
+                Cuboid::new(0.5, 1.6, 0.5),
+                warm.clone(),
+                Transform::from_xyz(-2.75, 0.8, 0.6),
+            );
+            ctx.spawn_mesh(
+                Cuboid::new(0.5, 0.5, 0.5),
+                warm.clone(),
+                Transform::from_xyz(1.6, 0.25, 0.4),
+            );
+            ctx.spawn_mesh(
+                Cuboid::new(0.5, 0.5, 0.5),
+                warm.clone(),
+                Transform::from_xyz(2.1, 0.25, 0.4),
+            );
+            ctx.spawn_mesh(
+                Cuboid::new(0.5, 0.5, 0.5),
+                warm,
+                Transform::from_xyz(1.85, 0.75, 0.4),
+            );
             ctx.spawn_mesh(
                 Sphere::new(0.45).mesh().uv(48, 24),
                 grey,
@@ -505,25 +536,6 @@ pub fn spawn_scene(kind: SceneKind, ctx: &mut SceneCtx) {
                 }
             }
         }
-        SceneKind::Skybox => {
-            ctx.ambient(500.0);
-            ctx.sun(6_000.0, Vec3::new(0.3, -1.0, -0.2), false);
-            let disk = ctx.mat(Color::srgb(0.3, 0.3, 0.3), 0.9);
-            ctx.spawn_mesh(Circle::new(6.0), disk, Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)));
-            // Posts on a ring, the red one exactly on the -X/-Z cube edge (the face seam).
-            let white = ctx.mat(Color::srgb(0.9, 0.9, 0.9), 0.6);
-            let red = ctx.mat(Color::srgb(0.95, 0.05, 0.05), 0.6);
-            for i in 0..16 {
-                let a = i as f32 / 16.0 * 2.0 * PI;
-                let dir = Vec3::new(a.cos(), 0.0, a.sin());
-                let m = if i == 10 { red.clone() } else { white.clone() };
-                ctx.spawn_mesh(
-                    Cuboid::new(0.12, 2.6, 0.12),
-                    m,
-                    Transform::from_translation(dir * 5.0 + Vec3::Y * 1.3),
-                );
-            }
-        }
         SceneKind::Taa => {
             ctx.ambient(600.0);
             ctx.sun(7_000.0, Vec3::new(-0.3, -1.0, -0.6), false);
@@ -540,7 +552,11 @@ pub fn spawn_scene(kind: SceneKind, ctx: &mut SceneCtx) {
                 fine.clone(),
                 Transform::from_xyz(0.0, 2.0, -3.0).with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
             );
-            ctx.spawn_mesh(Plane3d::default().mesh().size(16.0, 8.0), fine, Transform::IDENTITY);
+            ctx.spawn_mesh(
+                Plane3d::default().mesh().size(16.0, 8.0),
+                fine,
+                Transform::IDENTITY,
+            );
             // Chain-link style fence of thin wires.
             let wire = ctx.mat(Color::srgb(0.95, 0.85, 0.3), 0.4);
             let vertical = ctx.meshes.add(Cylinder::new(0.006, 2.0));
@@ -593,15 +609,6 @@ pub fn camera_extras(kind: SceneKind, variant: &Variant, ctx: &mut SceneCtx, cam
             ctx.features
                 .push(format!("DistanceFog linear {start}..{end} m"));
         }
-        SceneKind::Skybox => {
-            let image = ctx.images.add(debug_cubemap(256));
-            cam.insert(bevy::light::Skybox {
-                image: Some(image),
-                brightness: 1_000.0,
-                ..default()
-            });
-            ctx.features.push("Skybox (procedural labelled cubemap)".into());
-        }
         SceneKind::DeferredLighting | SceneKind::ClusteredLights | SceneKind::Taa => {}
     }
     if variant.taa {
@@ -634,7 +641,11 @@ fn checker_image(a: [u8; 3], b: [u8; 3]) -> Image {
     let mut data = Vec::with_capacity((size * size * 4) as usize);
     for y in 0..size {
         for x in 0..size {
-            let c = if (x / CELL + y / CELL).is_multiple_of(2) { a } else { b };
+            let c = if (x / CELL + y / CELL).is_multiple_of(2) {
+                a
+            } else {
+                b
+            };
             data.extend_from_slice(&[c[0], c[1], c[2], 255]);
         }
     }
@@ -650,56 +661,5 @@ fn checker_image(a: [u8; 3], b: [u8; 3]) -> Image {
         RenderAssetUsages::RENDER_WORLD,
     );
     image.sampler = repeat_sampler();
-    image
-}
-
-/// Recognisable cubemap: each face has its own colour, a grid every 1/8 of the face, a
-/// thick centre cross and a white border, so any zoom/offset of the sky is obvious.
-/// Face order is +X, -X, +Y, -Y, +Z, -Z.
-fn debug_cubemap(face: u32) -> Image {
-    const COLORS: [[u8; 3]; 6] = [
-        [200, 50, 50],   // +X red
-        [40, 170, 190],  // -X cyan
-        [70, 90, 220],   // +Y blue
-        [110, 80, 50],   // -Y brown
-        [60, 170, 60],   // +Z green
-        [200, 170, 40],  // -Z yellow
-    ];
-    let cell = face / 8;
-    let mut data = Vec::with_capacity((face * face * 4 * 6) as usize);
-    for color in COLORS {
-        for y in 0..face {
-            for x in 0..face {
-                let border = x < 3 || y < 3 || x >= face - 3 || y >= face - 3;
-                let cross = x.abs_diff(face / 2) < 4 || y.abs_diff(face / 2) < 4;
-                let grid = x % cell == 0 || y % cell == 0;
-                let c = if border {
-                    [255, 255, 255]
-                } else if cross {
-                    [20, 20, 20]
-                } else if grid {
-                    color.map(|v| v / 2)
-                } else {
-                    color
-                };
-                data.extend_from_slice(&[c[0], c[1], c[2], 255]);
-            }
-        }
-    }
-    let mut image = Image::new(
-        Extent3d {
-            width: face,
-            height: face,
-            depth_or_array_layers: 6,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    image.texture_view_descriptor = Some(TextureViewDescriptor {
-        dimension: Some(TextureViewDimension::Cube),
-        ..default()
-    });
     image
 }

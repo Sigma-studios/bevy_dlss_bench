@@ -1,6 +1,6 @@
 # bevy_dlss_bench: see README.md
 
-dlss_version := "310.5.3"
+dlss_version := "310.9.1"
 dlss_so := "vendor/DLSS/lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so." + dlss_version
 
 # Capture every scene and variant, then compose sheets (extra args go to the binary).

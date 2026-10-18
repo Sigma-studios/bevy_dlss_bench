@@ -26,7 +26,7 @@ use crate::{
     world::{self, BenchCamera, BenchCorePlugin, DlssAvailability, LabelLine, RenderProbe},
 };
 
-const HELP: &str = "1-7 / [ ] scene | Z DLSS mode | R reset history | \
+const HELP: &str = "1-6 / [ ] scene | Z DLSS mode | R reset history | \
                     C camera reset | H label | P screenshot | \
                     fly: right-drag + WASD/QE (Shift fast) | Esc quit";
 
@@ -115,9 +115,11 @@ fn input(
         KeyCode::Digit4,
         KeyCode::Digit5,
         KeyCode::Digit6,
-        KeyCode::Digit7,
     ];
-    let current = SceneKind::ALL.iter().position(|s| *s == v.scene).unwrap_or(0);
+    let current = SceneKind::ALL
+        .iter()
+        .position(|s| *s == v.scene)
+        .unwrap_or(0);
     let mut next_scene = None;
     for (i, key) in digits.iter().enumerate() {
         if keys.just_pressed(*key) && i < SceneKind::ALL.len() {
@@ -144,7 +146,10 @@ fn input(
     if keys.just_pressed(KeyCode::KeyZ) {
         match dlss.0 {
             Ok(()) => {
-                let i = DLSS_CYCLE.iter().position(|m| *m == v.variant.dlss).unwrap_or(0);
+                let i = DLSS_CYCLE
+                    .iter()
+                    .position(|m| *m == v.variant.dlss)
+                    .unwrap_or(0);
                 v.variant.dlss = DLSS_CYCLE[(i + 1) % DLSS_CYCLE.len()];
                 v.rebuild = true;
             }
@@ -293,7 +298,11 @@ fn update_label(
         None
     };
     for mut vis in &mut roots {
-        vis.set_if_neq(if v.label { Visibility::Inherited } else { Visibility::Hidden });
+        vis.set_if_neq(if v.label {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
     let mut text = world::label_lines(&v.meta, &v.variant, v.ticks);
     if let Some((_, until)) = &v.message

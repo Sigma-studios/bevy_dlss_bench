@@ -11,15 +11,17 @@ scene runs with TAA on and adds DLSS without TAA as its control. Every
 image has a Bevy UI label, and the variants are then composed into comparison sheets.
 This repo is meant as the evidence for a Bevy issue or PR.
 
-Pinned versions: Bevy **0.19.1** (feature `dlss`), dlss_wgpu **4.0.0**, NVIDIA DLSS SDK
-**v310.5.3**, wgpu 29. Developed for NixOS + RTX 4070 Super + Vulkan.
+Pinned versions: Bevy **0.20.0** (feature `dlss`), dlss_wgpu **6.0.0**, NVIDIA DLSS SDK
+**v310.9.1**, wgpu 30, Rust 1.97.1 (`rust-toolchain.toml`). Developed for NixOS + RTX 4070
+Super + Vulkan. Every bug below was checked to still be present in 0.20.0 and on `main`
+(2026-10-16).
 
 ## Running
 
 ```sh
 nix-shell          # libclang, vulkan-headers, /run/opengl-driver/lib, fetches vendor/DLSS
 just shots         # all scenes x all variants -> out/
-just shots --scene ssao,skybox --mode quality,ultra-performance --res 2560x1440
+just shots --scene ssao,fog --mode quality,ultra-performance --res 2560x1440
 just list          # scenes, features, variants
 just view          # interactive viewer (keys below)
 just sheets        # re-compose sheets from existing captures
@@ -38,7 +40,7 @@ just view --scene ssao --variants dlss-performance     # start on a given scene 
 
 | key | action |
 |---|---|
-| `1`-`7`, `[` `]` | jump to / previous / next scene |
+| `1`-`6`, `[` `]` | jump to / previous / next scene |
 | `Z` | cycle DLSS: off -> Quality -> Balanced -> Performance -> Ultra Performance -> DLAA (scene 7 always has TAA on, so this shows TAA + DLSS) |
 | `R` | reset DLSS / TAA history |
 | `C` | snap the camera back to the scene's fixed pose |
@@ -103,39 +105,39 @@ out/
 
 ### DLSS SDK / Nix details
 
-* `scripts/fetch-dlss-sdk.sh` makes a sparse clone of tag `v310.5.3` of
-  [NVIDIA/DLSS](https://github.com/NVIDIA/DLSS/tree/v310.5.3) into `vendor/DLSS`. It takes the
-  headers, `libnvsdk_ngx.a`, `libnvidia-ngx-dlss.so.310.5.3`, the license and the programming
+* `scripts/fetch-dlss-sdk.sh` makes a sparse clone of tag `v310.9.1` of
+  [NVIDIA/DLSS](https://github.com/NVIDIA/DLSS/tree/v310.9.1) into `vendor/DLSS`. It takes the
+  headers, `libnvsdk_ngx.a`, `libnvidia-ngx-dlss.so.310.9.1`, the license and the programming
   guide (about 90 MB). It is idempotent and runs from the `shellHook` and from `just shots`.
   Fetching it means accepting the
-  [DLSS SDK license](https://github.com/NVIDIA/DLSS/blob/v310.5.3/LICENSE.txt).
+  [DLSS SDK license](https://github.com/NVIDIA/DLSS/blob/v310.9.1/LICENSE.txt).
 * `.cargo/config.toml` sets `DLSS_SDK = vendor/DLSS` (relative to the project) through `[env]`.
 * `shell.nix` sets `VULKAN_SDK=${vulkan-headers}` (dlss_wgpu reads `$VULKAN_SDK/include`) and
   `LIBCLANG_PATH` (bindgen). It also prepends `/run/opengl-driver/lib`, which holds the NVIDIA
   Vulkan ICD and the NGX core, plus the vulkan-loader to `LD_LIBRARY_PATH`.
-* `just shots` copies `libnvidia-ngx-dlss.so.310.5.3` next to the executable, where NGX looks
+* `just shots` copies `libnvidia-ngx-dlss.so.310.9.1` next to the executable, where NGX looks
   for it.
 
 ## Scenes and the bugs they isolate
 
-All links point to tag `v0.19.1`.
+All links point to tag `v0.20.0`.
 
 ### Background: what `MainPassResolutionOverride` changes
 
-DLSS's [`prepare_dlss`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/dlss/prepare.rs#L70-L111)
+DLSS's [`prepare_dlss`](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_anti_alias/src/dlss/prepare.rs#L70-L111)
 uses `view.viewport.zw()` as the upscaled (output) size and inserts
 `MainPassResolutionOverride(render_resolution)` on the render-world camera. Then:
 
 * The prepass, deferred-gbuffer and main opaque passes set a smaller GPU viewport via
-  [`Viewport::from_viewport_and_override`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_camera/src/camera.rs#L118-L129)
-  ([opaque](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_core_pipeline/src/core_3d/main_opaque_pass_3d_node.rs#L77-L80),
-  [prepass](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_core_pipeline/src/prepass/node.rs#L201),
-  [deferred](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_core_pipeline/src/deferred/node.rs#L220)).
+  [`Viewport::from_viewport_and_override`](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_camera/src/camera.rs#L119-L130)
+  ([opaque](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_core_pipeline/src/core_3d/main_opaque_pass_3d_node.rs#L77-L80),
+  [prepass](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_core_pipeline/src/prepass/node.rs#L201),
+  [deferred](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_core_pipeline/src/deferred/node.rs#L220)).
   So the scene is drawn into the **top-left `render_resolution` rectangle** of full-size textures.
 * The view uniform gets
-  [`main_pass_viewport`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_render/src/view/mod.rs#L1035-L1045)
+  [`main_pass_viewport`](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_render/src/view/mod.rs#L1212-L1222)
   alongside the unchanged `viewport`. The
-  [doc comment](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_camera/src/camera.rs#L132-L144)
+  [doc comment](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_camera/src/camera.rs#L133-L145)
   says: *"In shaders, use `View::main_pass_viewport` instead of `View::viewport`"*.
   Outside Solari and the atmosphere, almost nothing does yet.
 
@@ -144,7 +146,7 @@ Everything that maps a pixel of the main pass back to UV, NDC or world space thr
 by the factor `render / output`: 0.667 for Quality, 0.5 for Performance.
 
 The core helper used by most of the bugs below is
-[`frag_coord_to_uv` / `frag_coord_to_ndc` / `ndc_to_frag_coord`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/render/view_transformations.wgsl#L225-L238),
+[`frag_coord_to_uv` / `frag_coord_to_ndc` / `ndc_to_frag_coord`](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/render/view_transformations.wesl#L222-L235),
 which divides by `view.viewport.zw`.
 
 ### 1. `deferred_lighting`: deferred lighting pass
@@ -152,9 +154,9 @@ which divides by `view.viewport.zw`.
 * **Scene:** checker floor, boxes, a sphere, a thin pole and a back wall. One directional
   light with shadows (1 cascade, 4096²) and low ambient light.
 * **Bug:** `pbr_input_from_deferred_gbuffer`
-  [rebuilds the world position](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/deferred/pbr_deferred_functions.wgsl#L123)
+  [rebuilds the world position](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/deferred/functions.wesl#L123)
   with `position_ndc_to_world(frag_coord_to_ndc(frag_coord))`, which uses the full viewport.
-  On top of that, the [deferred lighting draw](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/deferred/mod.rs#L121-L181)
+  On top of that, the [deferred lighting draw](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/deferred/mod.rs#L123-L189)
   sets no viewport at all.
 * **Expected under DLSS:** every pixel is lit as if it were at a world position scaled toward
   the top-left of the screen. Shadows slide and stretch relative to their casters, and N·L and
@@ -168,11 +170,11 @@ which divides by `view.viewport.zw`.
   plain plane. Each light has an unlit marker sphere. Rendered forward so that deferred
   reconstruction does not mix in.
 * **Bug:** clustering on the CPU uses the full viewport.
-  [`assign_objects_to_clusters`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_light/src/cluster/assign.rs#L304-L376)
+  [`assign_objects_to_clusters`](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_light/src/cluster/assign.rs#L334-L408)
   takes `camera.physical_viewport_size()`, and
-  [`cluster_factors.xy`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/render/light.rs#L1758-L1759)
+  [`cluster_factors.xy`](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/render/light.rs#L1851-L1852)
   divides by `extracted_view.viewport.zw`. In the shader,
-  [`view_fragment_cluster_index`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/render/clustered_forward.wgsl#L56-L57)
+  [`view_fragment_cluster_index`](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/render/clustered_forward.wesl#L57-L58)
   turns a main-pass `frag_coord` into a tile with those factors. A pixel therefore reads the
   light list of a tile closer to the top-left than the one it really sits in.
 * **Expected under DLSS:** light pools are cut along tile edges, are missing, or are offset
@@ -183,9 +185,9 @@ which divides by `view.viewport.zw`.
 * **Scene:** a glossy floor (`perceptual_roughness` 0.15, inside SSR's default 0.12..0.55 active range) with five coloured boxes and
   spheres. One unshadowed directional light. Deferred, because Bevy's SSR requires it.
 * **Bug:** the SSR fragment shader
-  [rebuilds the ray origin](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/ssr/ssr.wgsl#L164)
+  [rebuilds the ray origin](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/ssr.wesl#L164)
   with `frag_coord_to_ndc`. The raymarch converts between NDC and depth-texture UVs over the
-  full texture, and the [SSR pass](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/ssr/mod.rs#L245-L317)
+  full texture, and the [SSR pass](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/ssr/mod.rs#L244-L316)
   sets no viewport.
 * **Expected under DLSS:** reflections are offset or scaled relative to the objects, smeared,
   or missing. The deferred-lighting artefacts from scene 1 are also present. There is no
@@ -196,29 +198,30 @@ which divides by `view.viewport.zw`.
 * **Scene:** a room corner (floor and two walls) with boxes pushed into the corner and
   against the walls, a stack, and a sphere on the floor. Strong ambient light so that only AO
   shapes the image.
-* **Bug:** the [SSAO node](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/ssao/mod.rs#L166-L250)
+* **Bug:** the [SSAO node](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/ssao/mod.rs#L184-L275)
   dispatches all three passes over `camera.physical_viewport_size`, and its
-  [textures](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/ssao/mod.rs#L523-L526)
-  are sized from it. The shaders compute UVs as `pixel / view.viewport.zw`
-  ([ssao.wgsl#L50](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/ssao/ssao.wgsl#L50),
-  [#L144](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/ssao/ssao.wgsl#L144),
-  [preprocess_depth.wgsl#L60](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/ssao/preprocess_depth.wgsl#L60),
-  [spatial_denoise.wgsl#L29](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/ssao/spatial_denoise.wgsl#L29)).
-  The result is that SSAO samples the whole depth texture, where only the top-left rectangle
-  is valid, and the main pass then reads the AO texture at its own (smaller) pixel coordinates.
-* **Expected under DLSS:** contact occlusion is magnified or offset and no longer hugs the
-  creases, with dark smears from depth outside the rendered rectangle.
-* **Related:** [#25319](https://github.com/bevyengine/bevy/pull/25319) fixes the same class
-  of problem for cameras with `Some(Viewport)`, using the viewport offset. Also
-  [#25338](https://github.com/bevyengine/bevy/pull/25338).
+  [textures](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/ssao/mod.rs#L541-L544)
+  are sized from it. Since [#25319](https://github.com/bevyengine/bevy/pull/25319) (in 0.20)
+  the [depth prepass is sampled per pixel](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/ssao/preprocess_depth.wesl#L62),
+  but the view-space reconstruction still uses `uv = pixel / view.viewport.zw`
+  ([ssao.wesl#L52](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/ssao/ssao.wesl#L52),
+  [#L141](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/ssao/ssao.wesl#L141),
+  [spatial_denoise.wesl#L28](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/ssao/spatial_denoise.wesl#L28)).
+  So each rendered pixel's depth is unprojected as if it sat at the same pixel of the full-size
+  image, which gives wrong view-space positions and normals. The area outside the rendered
+  rectangle is processed too.
+* **Expected under DLSS:** contact occlusion has the wrong shape or strength and no longer
+  hugs the creases, with possible dark halos at the edge of the rendered rectangle.
+* **Related:** #25319 fixed the same class of problem for cameras with `Some(Viewport)`, using
+  the viewport offset. Also [#25338](https://github.com/bevyengine/bevy/pull/25338).
 
 ### 5. `fog`: distance fog in the deferred path
 
 * **Scene:** a long corridor of 2×16 pillars with linear `DistanceFog` from 2 to 28 m.
   Unshadowed directional light.
 * **Bug:** in deferred,
-  [`main_pass_post_lighting_processing` → `apply_fog`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/render/pbr_functions.wgsl#L995-L1004)
-  runs in the [deferred lighting shader](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/deferred/deferred_lighting.wgsl#L84)
+  [`main_pass_post_lighting_processing` → `apply_fog`](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/render/pbr_functions.wesl#L978-L987)
+  runs in the [deferred lighting shader](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/deferred/deferred_lighting.wesl#L85)
   with `pbr_input.world_position`, which is the wrongly reconstructed position from scene 1.
 * **Expected under DLSS:** the fog stops following depth. Near pillars get fogged, far ones
   look too clear, and the gradient bends toward the top-left.
@@ -229,20 +232,7 @@ which divides by `view.viewport.zw`.
   [#23252](https://github.com/bevyengine/bevy/issues/23252)). That fix is the model for the
   others.
 
-### 6. `skybox`: control, already fixed upstream
-
-* **Scene:** a procedural cubemap with one colour per face, an 8×8 grid, a centre cross and
-  white face borders. The camera looks at the −X/−Z cube edge, where a red post on a ring of
-  white posts marks the seam.
-* **Bug:** [`skybox_fragment`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_core_pipeline/src/skybox/skybox.wgsl#L76)
-  builds its ray from `view.viewport`.
-* **Expected under DLSS:** the sky is zoomed and offset against the geometry, so the seam
-  leaves the red post.
-* **Fix:** [#25604 "Build the skybox ray from the main pass viewport"](https://github.com/bevyengine/bevy/pull/25604),
-  merged for 0.20. The scene shows that the harness catches a known bug, and it can be re-run
-  on 0.20 as a passing control.
-
-### 7. `taa`: TAA + DLSS together (double jitter)
+### 6. `taa`: TAA + DLSS together (double jitter)
 
 * **Scene:** a fence of 6 mm wires in front of a high-frequency checker wall and floor
   (nearest sampling, no mips). The fence slides sideways with
@@ -250,14 +240,14 @@ which divides by `view.viewport.zw`.
   TAA is on by default in this scene (and only here). Variants: `native-taa` (TAA-only
   reference), `dlss-quality-taa`, `dlss-performance-taa`, and `dlss-quality` without TAA as
   the control.
-* **Bug:** both [`prepare_taa_jitter`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/taa/mod.rs#L353-L382)
+* **Bug:** both [`prepare_taa_jitter`](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_anti_alias/src/taa/mod.rs#L353-L383)
   (8-tap Halton) and `prepare_dlss`
-  ([#L86](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/dlss/prepare.rs#L86),
-  [#L101](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/dlss/prepare.rs#L101))
+  ([#L86](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_anti_alias/src/dlss/prepare.rs#L86),
+  [#L101](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_anti_alias/src/dlss/prepare.rs#L101))
   write `TemporalJitter.offset` in `RenderSystems::PrepareViews`, with no ordering between
   them. Both the
-  [TAA node](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/taa/mod.rs#L72)
-  and the [DLSS node](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/dlss/mod.rs#L193-L196)
+  [TAA node](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_anti_alias/src/taa/mod.rs#L72)
+  and the [DLSS node](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_anti_alias/src/dlss/mod.rs#L193-L196)
   are in `Core3dSystems::EarlyPostProcess`, again unordered. So TAA either resolves the
   low-resolution rectangle as if it were the full frame, or re-accumulates the already
   upscaled image with low-resolution motion vectors. Nothing rejects the combination.
@@ -278,15 +268,18 @@ which divides by `view.viewport.zw`.
    `cluster_factors`.
 3. SSAO: dispatch over the main-pass size and allocate the AO textures at that size, then
    divide by `main_pass_viewport.zw` in the three shaders. Builds on #25319.
-4. Skybox: done in #25604.
-5. TAA + DLSS: make them mutually exclusive (warn and remove `TemporalAntiAliasing` when `Dlss`
+4. TAA + DLSS: make them mutually exclusive (warn and remove `TemporalAntiAliasing` when `Dlss`
    is present), or order `prepare_dlss` after `prepare_taa_jitter` and skip the TAA node for
    DLSS cameras.
-6. Others found while auditing, not covered by a scene:
-   [transmission](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/transmission/transmission.wgsl#L37-L38)
-   and [OIT resolve](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_core_pipeline/src/oit/resolve/oit_resolve.wgsl#L32)
-   use `view.viewport`. [volumetric fog](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/volumetric_fog/volumetric_fog.wgsl#L139-L200)
+5. Others found while auditing, not covered by a scene:
+   [transmission](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/transmission.wesl#L47-L48)
+   and [OIT resolve](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_core_pipeline/src/oit/resolve/oit_resolve.wesl#L31)
+   use `view.viewport`. [volumetric fog](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/volumetric_fog/volumetric_fog.wesl#L138-L199)
    uses `frag_coord_to_ndc`.
+
+Already fixed upstream, so not in this bench: the skybox
+([#25604](https://github.com/bevyengine/bevy/pull/25604), in 0.20) and the atmosphere
+([#22013](https://github.com/bevyengine/bevy/pull/22013)).
 
 Related upstream: [#19817](https://github.com/bevyengine/bevy/pull/19817) (resolution
 override), [#20403](https://github.com/bevyengine/bevy/pull/20403) (`main_pass_viewport`),
