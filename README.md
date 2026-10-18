@@ -20,9 +20,40 @@ nix-shell          # libclang, vulkan-headers, /run/opengl-driver/lib, fetches v
 just shots         # all scenes x all variants -> out/
 just shots --scene ssao,skybox --mode quality,ultra-performance --res 2560x1440
 just list          # scenes, features, variants
+just view          # interactive viewer (keys below)
 just sheets        # re-compose sheets from existing captures
 just shots-native  # any GPU/OS, built without the dlss feature (DLSS tiles say "unsupported")
 ```
+
+### Interactive viewer
+
+To step through a bug by hand, or check a fix against a patched Bevy, open the same scenes in a
+window:
+
+```sh
+just view                                              # first scene, native
+just view --scene ssao --variants dlss-performance     # start on a given scene / variant
+```
+
+| key | action |
+|---|---|
+| `1`-`8`, `[` `]` | jump to / previous / next scene |
+| `Z` | cycle DLSS: off -> Quality -> Balanced -> Performance -> Ultra Performance -> DLAA |
+| `X` | force forward rendering (deferred scenes only) |
+| `T` | toggle TAA |
+| `R` | reset DLSS / TAA history |
+| `Space` | pause the TAA scene's fence animation |
+| `C` | snap the camera back to the scene's fixed pose |
+| right-drag + `WASD` / `QE` (`Shift` = fast) | fly (Bevy `FreeCamera`) |
+| `H` | hide / show the label |
+| `P` | screenshot to `out/view/<scene>/<variant>-NNN.png` (label included unless hidden) |
+| `Esc` | quit |
+
+Each switch rebuilds the scene, because the deferred/forward choice is baked into the
+materials. The camera stays where you put it, so you can flip between `native` and
+`dlss-*` from exactly the same view. Switching scene resets the camera. The label is the same
+as in the captures and shows the live main-pass resolution read from the render world. `--res`
+sets the window's physical size (scale factor forced to 1).
 
 CLI (`bevy_dlss_bench --help`):
 
@@ -35,6 +66,7 @@ CLI (`bevy_dlss_bench --help`):
 | `--settle N` | `90` | frames rendered after every pipeline is compiled, before capture (DLSS/TAA history) |
 | `--out DIR` | `out` | output directory |
 | `--tile-width N` | `960` | max tile width in the per-scene sheets |
+| `--view` | | interactive viewer (see above) |
 | `--no-sheets` / `--sheets-only` / `--list` | | |
 
 Output:

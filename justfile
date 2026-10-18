@@ -10,6 +10,12 @@ shots *ARGS: sdk
     cp -f {{dlss_so}} target/release/
     ./target/release/bevy_dlss_bench {{ARGS}}
 
+# Interactive viewer, e.g. `just view --scene ssao --variants dlss-performance`.
+view *ARGS: sdk
+    cargo build --release
+    cp -f {{dlss_so}} target/release/
+    ./target/release/bevy_dlss_bench --view {{ARGS}}
+
 # Same without DLSS support compiled in (any GPU / OS): native shots only.
 shots-native *ARGS:
     cargo run --release --no-default-features -- {{ARGS}}

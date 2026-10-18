@@ -14,7 +14,7 @@ default = ["dlss"]
 dlss = ["bevy/dlss"]
 
 [dependencies]
-bevy = "=0.19.1"
+bevy = { version = "=0.19.1", features = ["free_camera"] }
 ab_glyph = "0.2"
 clap = { version = "4", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }

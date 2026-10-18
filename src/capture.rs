@@ -7,28 +7,16 @@
 //! Both are captured in the same frame once all pipelines are compiled and the
 //! temporal history (DLSS / TAA) had `settle` frames to converge.
 
-use std::{
-    fmt::Write as _,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
 use bevy::{
     app::ScheduleRunnerPlugin,
-    camera::{Hdr, MainPassResolutionOverride, RenderTarget},
-    core_pipeline::{
-        prepass::{DeferredPrepass, DepthPrepass, MotionVectorPrepass},
-        tonemapping::Tonemapping,
-    },
+    camera::RenderTarget,
     light::DirectionalLightShadowMap,
-    pbr::DefaultOpaqueRendererMethod,
     prelude::*,
     render::{
-        Render, RenderApp, RenderSystems,
-        render_resource::{CachedPipelineState, PipelineCache, TextureFormat, TextureUsages},
+        render_resource::{TextureFormat, TextureUsages},
         renderer::RenderAdapterInfo,
-        view::ExtractedView,
         view::screenshot::{Screenshot, ScreenshotCaptured},
     },
     window::ExitCondition,
@@ -37,17 +25,14 @@ use bevy::{
 
 use crate::{
     meta::Meta,
-    scenes::{self, Fence, SceneCtx, SceneKind},
+    scenes::{self, Fence, SceneKind},
     variant::Variant,
+    world::{self, BenchCorePlugin, DlssAvailability, LabelLine, RenderProbe},
 };
 
 /// Process exit code of a capture whose variant needs DLSS on a machine without it.
 pub const EXIT_DLSS_UNSUPPORTED: u8 = 3;
 const EXIT_TIMEOUT: u8 = 4;
-
-#[cfg(feature = "dlss")]
-const DLSS_PROJECT_ID: bevy::asset::uuid::Uuid =
-    bevy::asset::uuid::Uuid::from_u128(0x6f1c2e4a_9b3d_4e7f_8a21_5c0d9e3b7a14);
 
 #[derive(Clone, Debug)]
 pub struct Job {
@@ -71,18 +56,6 @@ impl Job {
     }
 }
 
-/// Written by the render world, read by the main world.
-#[derive(Default, Debug, Clone, Copy)]
-struct RenderProbeData {
-    /// Size of the 3D camera's main pass: `MainPassResolutionOverride` if present, else the viewport.
-    main_pass: Option<UVec2>,
-    has_override: bool,
-    pipelines_pending: usize,
-}
-
-#[derive(Resource, Clone, Default)]
-struct RenderProbe(Arc<Mutex<RenderProbeData>>);
-
 #[derive(Resource)]
 struct State {
     job: Job,
@@ -95,23 +68,15 @@ struct State {
     saved: u8,
 }
 
-#[derive(Component)]
-struct LabelLine(usize);
+/// Hands the job to the startup system.
+#[derive(Resource)]
+struct JobSlot(Option<Job>);
 
 pub fn run(job: Job) -> AppExit {
     let mut app = App::new();
+    world::insert_dlss_project_id(&mut app);
 
-    #[cfg(feature = "dlss")]
-    app.insert_resource(bevy::anti_alias::dlss::DlssProjectId(DLSS_PROJECT_ID));
-
-    let method = if job.scene.uses_deferred(&job.variant) {
-        DefaultOpaqueRendererMethod::deferred()
-    } else {
-        DefaultOpaqueRendererMethod::forward()
-    };
-    let probe = RenderProbe::default();
-
-    app.insert_resource(method)
+    app.insert_resource(world::opaque_method(job.scene, &job.variant))
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(DirectionalLightShadowMap { size: 4096 })
         .add_plugins(
@@ -124,72 +89,34 @@ pub fn run(job: Job) -> AppExit {
                 .disable::<WinitPlugin>(),
         )
         // Headless loop as fast as the GPU allows; nothing depends on wall-clock time.
-        .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::ZERO))
-        .insert_resource(probe.clone())
-        .insert_non_send(JobSlot(Some(job)))
+        .add_plugins((ScheduleRunnerPlugin::run_loop(Duration::ZERO), BenchCorePlugin))
+        .insert_resource(JobSlot(Some(job)))
         .add_systems(Startup, setup)
         .add_systems(Update, drive.run_if(resource_exists::<State>));
-
-    app.sub_app_mut(RenderApp)
-        .insert_resource(probe)
-        .add_systems(Render, probe_render_world.in_set(RenderSystems::Cleanup));
 
     app.run()
 }
 
-/// Hands the job to the startup system (keeps `Job` out of the ECS until setup).
-struct JobSlot(Option<Job>);
-
 #[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
-    mut slot: NonSendMut<JobSlot>,
+    mut slot: ResMut<JobSlot>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     adapter: Res<RenderAdapterInfo>,
-    #[cfg(feature = "dlss")] dlss_supported: Option<
-        Res<bevy::anti_alias::dlss::DlssSuperResolutionSupported>,
-    >,
+    dlss: Res<DlssAvailability>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let job = slot.0.take().expect("setup runs once");
-    let info = job.scene.info();
-    let deferred = job.scene.uses_deferred(&job.variant);
-
-    #[cfg(feature = "dlss")]
-    let dlss_unavailable = dlss_supported
-        .is_none()
-        .then_some("DLSS Super Resolution not supported by this GPU / driver / backend");
-    #[cfg(not(feature = "dlss"))]
-    let dlss_unavailable = Some("binary built without the `dlss` cargo feature");
-
-    let mut meta = Meta {
-        status: "ok".into(),
-        scene: info.name.into(),
-        title: info.title.into(),
-        feature: info.feature.into(),
-        variant: job.variant.name(),
-        variant_desc: job.variant.describe(),
-        expected: job.scene.expected_for(&job.variant).into(),
-        pipeline: if deferred { "deferred" } else { "forward" }.into(),
-        output: job.res,
-        render: None,
-        adapter: if adapter.driver_info.is_empty() {
-            format!("{} ({:?})", adapter.name, adapter.backend)
-        } else {
-            format!("{} ({:?}, {})", adapter.name, adapter.backend, adapter.driver_info)
-        },
-        features: Vec::new(),
-        frames: 0,
-    };
+    let mut meta = world::base_meta(job.scene, &job.variant, job.res, world::adapter_string(&adapter));
 
     if job.variant.dlss.is_some()
-        && let Some(reason) = dlss_unavailable
+        && let Err(reason) = dlss.0
     {
         eprintln!(
             "[{}/{}] DLSS unsupported: {reason}. Adapter: {}",
-            info.name, job.variant, meta.adapter
+            meta.scene, job.variant, meta.adapter
         );
         meta.status = format!("dlss-unsupported: {reason}");
         meta.write(&job.meta_path());
@@ -206,54 +133,18 @@ fn setup(
     let raw = target(&mut images);
     let labelled = target(&mut images);
 
-    // --- 3D camera under test -------------------------------------------------------------
-    let mut features: Vec<String> = vec![
-        "Hdr".into(),
-        "Msaa::Off".into(),
-        "DepthPrepass".into(),
-        "MotionVectorPrepass".into(),
-        "Tonemapping::TonyMcMapface".into(),
-    ];
-    let camera = commands
-        .spawn((
-            Camera3d::default(),
-            Camera {
-                order: 0,
-                ..default()
-            },
-            RenderTarget::Image(raw.clone().into()),
-            Hdr,
-            Msaa::Off,
-            Tonemapping::TonyMcMapface,
-            // Native shots get the same prepasses DLSS requires, so DLSS is the only difference.
-            DepthPrepass,
-            MotionVectorPrepass,
-            Transform::from_translation(info.eye).looking_at(info.target, Vec3::Y),
-        ))
-        .id();
-    if deferred {
-        commands.entity(camera).insert(DeferredPrepass);
-        features.push("DeferredPrepass".into());
-    }
-    #[cfg(feature = "dlss")]
-    if let Some(mode) = job.variant.dlss {
-        commands.entity(camera).insert(bevy::anti_alias::dlss::Dlss {
-            perf_quality_mode: mode.to_bevy(),
-            ..default()
-        });
-    }
+    let (_, features) = world::spawn_world(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &mut images,
+        job.scene,
+        &job.variant,
+        RenderTarget::Image(raw.clone().into()),
+        world::fixed_pose(job.scene),
+    );
 
-    let mut ctx = SceneCtx {
-        commands: &mut commands,
-        meshes: &mut meshes,
-        materials: &mut materials,
-        images: &mut images,
-        features: &mut features,
-    };
-    scenes::camera_extras(job.scene, &job.variant, &mut ctx, camera);
-    scenes::spawn_scene(job.scene, &mut ctx);
-
-    // --- Label camera: raw image + overlay ----------------------------------------------
+    // Label camera: raw image + overlay.
     let ui_camera = commands
         .spawn((
             Camera2d,
@@ -265,7 +156,7 @@ fn setup(
             RenderTarget::Image(labelled.clone().into()),
         ))
         .id();
-    let font_size = (job.res.y as f32 / 56.0).clamp(10.0, 30.0);
+    let font_size = world::label_font_size(job.res.y);
     commands
         .spawn((
             Node {
@@ -276,38 +167,7 @@ fn setup(
             ImageNode::new(raw.clone()),
             UiTargetCamera(ui_camera),
         ))
-        .with_children(|root| {
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(font_size * 0.6),
-                    top: Val::Px(font_size * 0.6),
-                    max_width: Val::Percent(62.0),
-                    padding: UiRect::all(Val::Px(font_size * 0.5)),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(font_size * 0.15),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
-            ))
-            .with_children(|panel| {
-                for (i, color) in LINE_COLORS.iter().enumerate() {
-                    panel.spawn((
-                        Text::new(""),
-                        TextFont {
-                            font_size: bevy::text::FontSize::Px(if i == 0 {
-                                font_size * 1.25
-                            } else {
-                                font_size
-                            }),
-                            ..default()
-                        },
-                        TextColor(*color),
-                        LabelLine(i),
-                    ));
-                }
-            });
-        });
+        .with_children(|root| world::spawn_label_panel(root, font_size, 6));
 
     meta.features = features;
     commands.insert_resource(State {
@@ -322,50 +182,6 @@ fn setup(
     });
 }
 
-const LINE_COLORS: [Color; 6] = [
-    Color::srgb(1.0, 1.0, 1.0),
-    Color::srgb(0.75, 0.85, 1.0),
-    Color::srgb(1.0, 0.85, 0.35),
-    Color::srgb(0.7, 0.7, 0.7),
-    Color::srgb(1.0, 0.5, 0.45),
-    Color::srgb(0.55, 0.55, 0.55),
-];
-
-fn label_lines(state: &State) -> [String; 6] {
-    let m = &state.meta;
-    let v = &state.job.variant;
-    let res = |r: UVec2| format!("{}x{}", r.x, r.y);
-    let render = match (m.render, v.dlss) {
-        (Some(r), _) => res(r),
-        (None, Some(mode)) => format!(
-            "~{}",
-            res((m.output.as_vec2() * mode.nominal_scale()).round().as_uvec2())
-        ),
-        (None, None) => res(m.output),
-    };
-    let mut features = String::new();
-    for (i, f) in m.features.iter().enumerate() {
-        let _ = write!(features, "{}{f}", if i == 0 { "" } else { ", " });
-    }
-    [
-        format!("{}  [{} / {}]", m.title, m.scene, m.variant),
-        format!("Feature under test: {}", m.feature),
-        format!(
-            "{}  |  render {} -> output {}  |  {}",
-            v.describe(),
-            render,
-            res(m.output),
-            m.pipeline
-        ),
-        format!("Also on: {features}"),
-        format!("Expected: {}", m.expected),
-        format!(
-            "Bevy 0.19.1 | {} | frame {}",
-            m.adapter, state.frame
-        ),
-    ]
-}
-
 fn drive(
     mut commands: Commands,
     mut state: ResMut<State>,
@@ -374,17 +190,16 @@ fn drive(
     mut lines: Query<(&mut Text, &LabelLine)>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let data = *probe.0.lock().unwrap();
+    let data = probe.get();
+    state.frame += 1;
     if state.requested {
-        state.frame += 1;
-        if state.frame > state.job.settle + 600 {
+        if state.frame > state.meta.frames + 600 {
             error!("timed out waiting for the screenshots");
             exit.write(AppExit::from_code(EXIT_TIMEOUT));
         }
         return;
     }
 
-    state.frame += 1;
     if state.job.scene.info().temporal {
         scenes::animate_fence(state.frame, &mut fences);
     }
@@ -404,12 +219,8 @@ fn drive(
         return;
     }
 
-    let text = label_lines(&state);
-    for (mut t, line) in &mut lines {
-        if t.0 != text[line.0] {
-            t.0.clone_from(&text[line.0]);
-        }
-    }
+    let text = world::label_lines(&state.meta, &state.job.variant, state.frame);
+    world::set_label_text(&text, &mut lines);
 
     if state.quiet_frames < state.job.settle {
         return;
@@ -452,32 +263,6 @@ fn drive(
                     exit.write(AppExit::Success);
                 }
             },
-        );
-    }
-}
-
-fn probe_render_world(
-    probe: Res<RenderProbe>,
-    views: Query<(&ExtractedView, Option<&MainPassResolutionOverride>), With<Camera3d>>,
-    pipeline_cache: Res<PipelineCache>,
-) {
-    let mut data = probe.0.lock().unwrap();
-    data.pipelines_pending = pipeline_cache.waiting_pipelines().count()
-        + pipeline_cache
-            .pipelines()
-            .filter(|p| {
-                matches!(
-                    p.state,
-                    CachedPipelineState::Queued | CachedPipelineState::Creating(_)
-                )
-            })
-            .count();
-    if let Some((view, resolution_override)) = views.iter().next() {
-        data.has_override = resolution_override.is_some();
-        data.main_pass = Some(
-            resolution_override
-                .map(|o| o.0)
-                .unwrap_or(view.viewport.zw()),
         );
     }
 }

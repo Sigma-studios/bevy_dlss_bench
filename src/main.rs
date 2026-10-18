@@ -5,12 +5,16 @@
 //! The orchestrator re-runs this binary once per (scene, variant) with `--capture`, because a
 //! Bevy app (and its render device / DLSS context) cannot be rebuilt inside one process.
 //! It then composes the comparison sheets from the PNGs.
+//!
+//! `--view` opens the interactive viewer instead (see `viewer.rs`).
 
 mod capture;
 mod meta;
 mod scenes;
 mod sheet;
 mod variant;
+mod viewer;
+mod world;
 
 use std::{
     fmt::Write as _,
@@ -74,6 +78,11 @@ struct Cli {
     #[arg(long)]
     sheets_only: bool,
 
+    /// Open the interactive viewer on the first scene of --scene, starting with the first
+    /// variant of --variants if it is an exact variant name (else native).
+    #[arg(long)]
+    view: bool,
+
     /// List scenes and their variants, then exit.
     #[arg(long)]
     list: bool,
@@ -125,6 +134,18 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
     }
 
     let scenes = select_scenes(&cli.scene)?;
+    if cli.view {
+        let variant = cli
+            .variants
+            .split(',')
+            .next()
+            .and_then(|v| Variant::parse(v.trim()))
+            .unwrap_or(Variant::NATIVE);
+        return Ok(match viewer::run(scenes[0], variant, cli.res, cli.out.clone()) {
+            AppExit::Success => ExitCode::SUCCESS,
+            AppExit::Error(code) => ExitCode::from(code.get()),
+        });
+    }
     let plan: Vec<(SceneKind, Vec<Variant>)> = scenes
         .iter()
         .map(|&s| (s, filter_variants(s.variants(&modes), &cli.variants)))
