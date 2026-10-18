@@ -25,7 +25,7 @@ use bevy::{
 
 use crate::{
     meta::Meta,
-    scenes::SceneKind,
+    scenes::{self, Fence, SceneKind},
     variant::Variant,
     world::{self, BenchCorePlugin, DlssAvailability, LabelLine, RenderProbe},
 };
@@ -186,6 +186,7 @@ fn drive(
     mut commands: Commands,
     mut state: ResMut<State>,
     probe: Res<RenderProbe>,
+    mut fences: Query<&mut Transform, With<Fence>>,
     mut lines: Query<(&mut Text, &LabelLine)>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -199,6 +200,9 @@ fn drive(
         return;
     }
 
+    if state.job.scene.info().temporal {
+        scenes::animate_fence(state.frame, &mut fences);
+    }
     if data.has_override || state.job.variant.dlss.is_none() {
         state.meta.render = data.main_pass;
     }

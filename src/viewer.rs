@@ -21,12 +21,12 @@ use bevy::{
 
 use crate::{
     meta::Meta,
-    scenes::SceneKind,
+    scenes::{self, Fence, SceneKind},
     variant::{DlssMode, Variant},
     world::{self, BenchCamera, BenchCorePlugin, DlssAvailability, LabelLine, RenderProbe},
 };
 
-const HELP: &str = "1-6 / [ ] scene | Z DLSS mode | T TAA | R reset history | \
+const HELP: &str = "1-7 / [ ] scene | Z DLSS mode | R reset history | \
                     C camera reset | H label | P screenshot | \
                     fly: right-drag + WASD/QE (Shift fast) | Esc quit";
 
@@ -115,6 +115,7 @@ fn input(
         KeyCode::Digit4,
         KeyCode::Digit5,
         KeyCode::Digit6,
+        KeyCode::Digit7,
     ];
     let current = SceneKind::ALL.iter().position(|s| *s == v.scene).unwrap_or(0);
     let mut next_scene = None;
@@ -149,10 +150,6 @@ fn input(
             }
             Err(reason) => v.message = Some((format!("DLSS unavailable: {reason}"), v.ticks + 240)),
         }
-    }
-    if keys.just_pressed(KeyCode::KeyT) {
-        v.variant.taa = !v.variant.taa;
-        v.rebuild = true;
     }
     if keys.just_pressed(KeyCode::KeyR) {
         if let Some(camera) = v.camera {
@@ -205,6 +202,7 @@ type SceneEntities = Or<(
     With<DirectionalLight>,
     With<SpotLight>,
     With<BenchCamera>,
+    With<Fence>,
     With<LabelRoot>,
 )>;
 
@@ -231,6 +229,8 @@ fn rebuild(
         _ => world::fixed_pose(v.scene),
     };
     v.reset_pose = false;
+    // TAA only exists in the temporal scene, where it is always on.
+    v.variant.taa = v.scene.info().temporal;
     for e in &old {
         commands.entity(e).try_despawn();
     }
@@ -267,8 +267,11 @@ fn rebuild(
     info!("viewer: {} / {}", v.scene.info().name, v.variant);
 }
 
-fn tick(mut viewer: ResMut<Viewer>) {
+fn tick(mut viewer: ResMut<Viewer>, mut fences: Query<&mut Transform, With<Fence>>) {
     viewer.ticks += 1;
+    if viewer.scene.info().temporal {
+        scenes::animate_fence(viewer.ticks, &mut fences);
+    }
 }
 
 fn update_label(
