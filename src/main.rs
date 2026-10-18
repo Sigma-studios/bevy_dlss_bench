@@ -43,13 +43,13 @@ struct Cli {
 
     /// Variants to capture: `all`, or a comma-separated list of variant names
     /// (`native`, `dlss-quality`, `dlss-quality-forward`, ...) or kinds
-    /// (`native`, `taa`, `dlss`, `forward`, `dlss-taa`).
+    /// (`native`, `dlss`, `forward`).
     #[arg(long, default_value = "all")]
     variants: String,
 
     /// DLSS quality modes for the `dlss-*` variants, comma-separated
     /// (dlaa, quality, balanced, performance, ultra-performance).
-    /// The first one is also used for the `-forward` and `-taa` combinations.
+    /// The first one is also used for the `-forward` variant.
     #[arg(long, default_value = "quality,performance")]
     mode: String,
 
@@ -220,11 +220,9 @@ fn filter_variants(all: Vec<Variant>, spec: &str) -> Vec<Variant> {
             tokens.iter().any(|&t| {
                 t == v.name()
                     || match t {
-                        "native" => v.dlss.is_none() && !v.taa,
-                        "taa" => v.dlss.is_none() && v.taa,
-                        "dlss" => v.dlss.is_some() && !v.forward && !v.taa,
+                        "native" => v.dlss.is_none(),
+                        "dlss" => v.dlss.is_some() && !v.forward,
                         "forward" => v.dlss.is_some() && v.forward,
-                        "dlss-taa" => v.dlss.is_some() && v.taa,
                         _ => false,
                     }
             })

@@ -4,9 +4,9 @@ Screenshot harness for the Bevy rendering features that break when DLSS renders 
 pass at a lower resolution (`MainPassResolutionOverride`) while other passes still use the
 full-size `view.viewport`.
 
-Each feature gets one small, deterministic scene (fixed camera, fixed seeds, no animation
-except in the temporal scene). That scene is captured as **native**, **DLSS Quality**,
-**DLSS Performance** and, where it applies, **DLSS + forward** or **DLSS + TAA**. Every
+Each feature gets one small, deterministic scene (fixed camera, fixed seeds, no animation).
+That scene is captured as **native**, **DLSS Quality**, **DLSS Performance** and, for the
+deferred scenes, **DLSS + forward**. Every
 image has a Bevy UI label, and the variants are then composed into comparison sheets.
 This repo is meant as the evidence for a Bevy issue or PR.
 
@@ -37,12 +37,10 @@ just view --scene ssao --variants dlss-performance     # start on a given scene 
 
 | key | action |
 |---|---|
-| `1`-`8`, `[` `]` | jump to / previous / next scene |
+| `1`-`6`, `[` `]` | jump to / previous / next scene |
 | `Z` | cycle DLSS: off -> Quality -> Balanced -> Performance -> Ultra Performance -> DLAA |
-| `X` | force forward rendering (deferred scenes only) |
 | `T` | toggle TAA |
 | `R` | reset DLSS / TAA history |
-| `Space` | pause the TAA scene's fence animation |
 | `C` | snap the camera back to the scene's fixed pose |
 | right-drag + `WASD` / `QE` (`Shift` = fast) | fly (Bevy `FreeCamera`) |
 | `H` | hide / show the label |
@@ -60,8 +58,8 @@ CLI (`bevy_dlss_bench --help`):
 | flag | default | meaning |
 |---|---|---|
 | `--scene <name\|all>` | `all` | comma-separated scene names (see below) |
-| `--variants <list\|all>` | `all` | variant names (`dlss-quality-forward`) or kinds: `native`, `taa`, `dlss`, `forward`, `dlss-taa` |
-| `--mode <list>` | `quality,performance` | DLSS modes: `dlaa`, `quality`, `balanced`, `performance`, `ultra-performance`. The first mode is also used for the `-forward` / `-taa` combinations |
+| `--variants <list\|all>` | `all` | variant names (`dlss-quality-forward`) or kinds: `native`, `dlss`, `forward` |
+| `--mode <list>` | `quality,performance` | DLSS modes: `dlaa`, `quality`, `balanced`, `performance`, `ultra-performance`. The first mode is also used for the `-forward` variant |
 | `--res WxH` | `1920x1080` | output resolution |
 | `--settle N` | `90` | frames rendered after every pipeline is compiled, before capture (DLSS/TAA history) |
 | `--out DIR` | `out` | output directory |
@@ -244,36 +242,6 @@ which divides by `view.viewport.zw`.
   merged for 0.20. The scene shows that the harness catches a known bug, and it can be re-run
   on 0.20 as a passing control.
 
-### 7. `taa`: TAA + DLSS together (double jitter)
-
-* **Scene:** a fence of 6 mm wires in front of a high-frequency checker wall and floor
-  (nearest sampling, no mips). The fence slides sideways with
-  `x = 0.35·sin(0.045·frame)`, driven by the frame counter so it is deterministic.
-  Variants: `native`, `native-taa`, `dlss-*`, `dlss-quality-taa`.
-* **Bug:** both [`prepare_taa_jitter`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/taa/mod.rs#L353-L382)
-  (8-tap Halton) and `prepare_dlss`
-  ([#L86](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/dlss/prepare.rs#L86),
-  [#L101](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/dlss/prepare.rs#L101))
-  write `TemporalJitter.offset` in `RenderSystems::PrepareViews`, with no ordering between
-  them. Both the
-  [TAA node](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/taa/mod.rs#L72)
-  and the [DLSS node](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/dlss/mod.rs#L193-L196)
-  are in `Core3dSystems::EarlyPostProcess`, again unordered. So TAA either resolves the
-  low-resolution rectangle as if it were the full frame, or re-accumulates the already
-  upscaled image with low-resolution motion vectors. Nothing rejects the combination.
-* **Expected:** wires shimmer, ghost or blur compared with `dlss-quality` alone.
-  `native-taa` is the TAA reference.
-
-### 8. `forward_control`: forward control
-
-The features of scenes 1, 2 and 5 together (shadowed directional light, 8 clustered point
-lights and distance fog), all forward. The **expected** result shows which bugs are
-deferred-only:
-
-* Shadows, lighting and fog should match native.
-* The clustered point lights should still be mis-tiled (scene 2 is not deferred-specific).
-* SSAO and the skybox are also path-independent, so their scenes already run forward.
-
 ## Suggested upstream fix (basis for a PR)
 
 1. Use `main_pass_viewport` in
@@ -289,14 +257,15 @@ deferred-only:
 3. SSAO: dispatch over the main-pass size and allocate the AO textures at that size, then
    divide by `main_pass_viewport.zw` in the three shaders. Builds on #25319.
 4. Skybox: done in #25604.
-5. TAA + DLSS: make them mutually exclusive (warn and remove `TemporalAntiAliasing` when `Dlss`
-   is present), or order `prepare_dlss` after `prepare_taa_jitter` and skip the TAA node for
-   DLSS cameras.
-6. Others found while auditing, not covered by a scene:
+5. Others found while auditing, not covered by a scene:
    [transmission](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/transmission/transmission.wgsl#L37-L38)
    and [OIT resolve](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_core_pipeline/src/oit/resolve/oit_resolve.wgsl#L32)
    use `view.viewport`. [volumetric fog](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/volumetric_fog/volumetric_fog.wgsl#L139-L200)
-   uses `frag_coord_to_ndc`.
+   uses `frag_coord_to_ndc`. TAA and DLSS on the same camera are not rejected: both
+   [`prepare_taa_jitter`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/taa/mod.rs#L353-L382)
+   and [`prepare_dlss`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_anti_alias/src/dlss/prepare.rs#L86-L102)
+   write `TemporalJitter` in `PrepareViews`, and both nodes run unordered in
+   `Core3dSystems::EarlyPostProcess`.
 
 Related upstream: [#19817](https://github.com/bevyengine/bevy/pull/19817) (resolution
 override), [#20403](https://github.com/bevyengine/bevy/pull/20403) (`main_pass_viewport`),

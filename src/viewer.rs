@@ -21,13 +21,13 @@ use bevy::{
 
 use crate::{
     meta::Meta,
-    scenes::{self, Fence, SceneKind},
+    scenes::SceneKind,
     variant::{DlssMode, Variant},
     world::{self, BenchCamera, BenchCorePlugin, DlssAvailability, LabelLine, RenderProbe},
 };
 
-const HELP: &str = "1-8 / [ ] scene | Z DLSS mode | X forced forward | T TAA | R reset history | \
-                    Space pause | C camera reset | H label | P screenshot | \
+const HELP: &str = "1-6 / [ ] scene | Z DLSS mode | T TAA | R reset history | \
+                    C camera reset | H label | P screenshot | \
                     fly: right-drag + WASD/QE (Shift fast) | Esc quit";
 
 /// Order of the DLSS cycle bound to `Z`.
@@ -52,10 +52,7 @@ struct Viewer {
     reset_pose: bool,
     camera: Option<Entity>,
     label: bool,
-    paused: bool,
-    /// Animation frame (stops while paused).
-    frame: u32,
-    /// Real frame counter, for message timeouts.
+    /// Frames since start (label, message timeouts).
     ticks: u32,
     shots: u32,
     meta: Meta,
@@ -93,14 +90,12 @@ pub fn run(scene: SceneKind, variant: Variant, res: UVec2, out: PathBuf) -> AppE
             reset_pose: true,
             camera: None,
             label: true,
-            paused: false,
-            frame: 0,
             ticks: 0,
             shots: 0,
             meta: Meta::default(),
             message: None,
         })
-        .add_systems(Update, (input, rebuild, animate, update_label).chain());
+        .add_systems(Update, (input, rebuild, tick, update_label).chain());
     app.run()
 }
 
@@ -120,8 +115,6 @@ fn input(
         KeyCode::Digit4,
         KeyCode::Digit5,
         KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
     ];
     let current = SceneKind::ALL.iter().position(|s| *s == v.scene).unwrap_or(0);
     let mut next_scene = None;
@@ -157,14 +150,6 @@ fn input(
             Err(reason) => v.message = Some((format!("DLSS unavailable: {reason}"), v.ticks + 240)),
         }
     }
-    if keys.just_pressed(KeyCode::KeyX) {
-        if v.scene.info().deferred {
-            v.variant.forward = !v.variant.forward;
-            v.rebuild = true;
-        } else {
-            v.message = Some(("scene is already forward".into(), v.ticks + 180));
-        }
-    }
     if keys.just_pressed(KeyCode::KeyT) {
         v.variant.taa = !v.variant.taa;
         v.rebuild = true;
@@ -184,9 +169,6 @@ fn input(
             });
         }
         v.message = Some(("history reset".into(), v.ticks + 120));
-    }
-    if keys.just_pressed(KeyCode::Space) {
-        v.paused = !v.paused;
     }
     if keys.just_pressed(KeyCode::KeyH) {
         v.label = !v.label;
@@ -223,7 +205,6 @@ type SceneEntities = Or<(
     With<DirectionalLight>,
     With<SpotLight>,
     With<BenchCamera>,
-    With<Fence>,
     With<LabelRoot>,
 )>;
 
@@ -286,15 +267,8 @@ fn rebuild(
     info!("viewer: {} / {}", v.scene.info().name, v.variant);
 }
 
-fn animate(mut viewer: ResMut<Viewer>, mut fences: Query<&mut Transform, With<Fence>>) {
+fn tick(mut viewer: ResMut<Viewer>) {
     viewer.ticks += 1;
-    if viewer.paused {
-        return;
-    }
-    viewer.frame += 1;
-    if viewer.scene.info().temporal {
-        scenes::animate_fence(viewer.frame, &mut fences);
-    }
 }
 
 fn update_label(
@@ -318,10 +292,7 @@ fn update_label(
     for mut vis in &mut roots {
         vis.set_if_neq(if v.label { Visibility::Inherited } else { Visibility::Hidden });
     }
-    let mut text = world::label_lines(&v.meta, &v.variant, v.frame);
-    if v.paused {
-        text[5].push_str(" | PAUSED");
-    }
+    let mut text = world::label_lines(&v.meta, &v.variant, v.ticks);
     if let Some((_, until)) = &v.message
         && v.ticks > *until
     {

@@ -30,8 +30,6 @@ pub enum SceneKind {
     Ssao,
     Fog,
     Skybox,
-    Taa,
-    ForwardControl,
 }
 
 pub struct SceneInfo {
@@ -43,28 +41,22 @@ pub struct SceneInfo {
     pub expected: &'static str,
     /// Caption for the `dlss-*-forward` variant (only for deferred scenes).
     pub expected_forward: &'static str,
-    /// Caption for the `dlss-*-taa` variant (only for the TAA scene).
-    pub expected_taa: &'static str,
     /// Scene renders opaque geometry through the deferred path by default.
     pub deferred: bool,
     /// A `dlss-*-forward` variant makes sense (feature also exists in forward).
     pub forward_variant: bool,
-    /// Scene tests temporal artefacts (adds TAA variants and a deterministic animation).
-    pub temporal: bool,
     pub eye: Vec3,
     pub target: Vec3,
 }
 
 impl SceneKind {
-    pub const ALL: [SceneKind; 8] = [
+    pub const ALL: [SceneKind; 6] = [
         SceneKind::DeferredLighting,
         SceneKind::ClusteredLights,
         SceneKind::Ssr,
         SceneKind::Ssao,
         SceneKind::Fog,
         SceneKind::Skybox,
-        SceneKind::Taa,
-        SceneKind::ForwardControl,
     ];
 
     pub fn parse(s: &str) -> Option<Self> {
@@ -78,10 +70,8 @@ impl SceneKind {
             feature: "",
             expected: "",
             expected_forward: "",
-            expected_taa: "",
             deferred: false,
             forward_variant: false,
-            temporal: false,
             eye: Vec3::new(7.0, 5.5, 9.0),
             target: Vec3::new(0.0, 0.5, 0.0),
         };
@@ -139,7 +129,6 @@ impl SceneKind {
                 forward_variant: true,
                 eye: Vec3::new(0.0, 1.7, 6.0),
                 target: Vec3::new(0.6, 1.4, -20.0),
-                ..base
             },
             SceneKind::Skybox => SceneInfo {
                 name: "skybox",
@@ -151,61 +140,27 @@ impl SceneKind {
                 target: Vec3::new(-1.0, 1.55, -1.0),
                 ..base
             },
-            SceneKind::Taa => SceneInfo {
-                name: "taa",
-                title: "7. TAA + DLSS (double jitter)",
-                feature: "TemporalJitter written by both prepare_taa_jitter and prepare_dlss; TAA resolves DLSS output",
-                expected: "DLSS alone: thin wires stable (reference for the TAA combination)",
-                expected_taa: "two jitter sequences fight over TemporalJitter and TAA re-resolves the upscaled \
-                               image: wires shimmer, ghost or blur",
-                temporal: true,
-                eye: Vec3::new(0.4, 1.2, 4.2),
-                target: Vec3::new(0.0, 1.0, 0.0),
-                ..base
-            },
-            SceneKind::ForwardControl => SceneInfo {
-                name: "forward_control",
-                title: "8. Forward control",
-                feature: "same features as scenes 1, 2 and 5, all through the forward path",
-                expected: "shadows and fog match native (deferred-only bugs gone); clustered point lights are \
-                           still mis-tiled",
-                eye: Vec3::new(7.0, 5.5, 9.0),
-                target: Vec3::new(0.0, 0.5, -1.0),
-                ..base
-            },
         }
     }
 
     pub fn variants(self, modes: &[DlssMode]) -> Vec<Variant> {
         let info = self.info();
         let mut out = vec![Variant::NATIVE];
-        if info.temporal {
-            out.push(Variant {
-                taa: true,
-                ..Variant::NATIVE
-            });
-        }
         for &mode in modes {
             out.push(Variant {
                 dlss: Some(mode),
                 ..Variant::NATIVE
             });
         }
-        if let Some(&first) = modes.first() {
-            if info.deferred && info.forward_variant {
-                out.push(Variant {
-                    dlss: Some(first),
-                    forward: true,
-                    taa: false,
-                });
-            }
-            if info.temporal {
-                out.push(Variant {
-                    dlss: Some(first),
-                    forward: false,
-                    taa: true,
-                });
-            }
+        if let Some(&first) = modes.first()
+            && info.deferred
+            && info.forward_variant
+        {
+            out.push(Variant {
+                dlss: Some(first),
+                forward: true,
+                taa: false,
+            });
         }
         out
     }
@@ -217,12 +172,10 @@ impl SceneKind {
 
     pub fn expected_for(self, variant: &Variant) -> &'static str {
         let info = self.info();
-        match (variant.dlss, variant.forward, variant.taa) {
-            (None, _, false) => "reference image: no artefact expected",
-            (None, _, true) => "reference image (TAA only): no artefact expected",
-            (Some(_), true, _) => info.expected_forward,
-            (Some(_), false, true) => info.expected_taa,
-            (Some(_), false, false) => info.expected,
+        match (variant.dlss, variant.forward) {
+            (None, _) => "reference image: no artefact expected",
+            (Some(_), true) => info.expected_forward,
+            (Some(_), false) => info.expected,
         }
     }
 }
@@ -247,10 +200,6 @@ impl Rng {
         (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
     }
 }
-
-/// Marks the fence of the TAA scene, moved by a frame-count-driven (deterministic) animation.
-#[derive(Component)]
-pub struct Fence;
 
 /// Everything a scene needs to spawn itself.
 pub struct SceneCtx<'a, 'w, 's> {
@@ -537,55 +486,6 @@ pub fn spawn_scene(kind: SceneKind, ctx: &mut SceneCtx) {
                 );
             }
         }
-        SceneKind::Taa => {
-            ctx.ambient(600.0);
-            ctx.sun(7_000.0, Vec3::new(-0.3, -1.0, -0.6), false);
-            // High-frequency backdrop and floor (no mipmaps): worst case for shimmer.
-            let checker = ctx.images.add(checker_image([230, 230, 230], [25, 25, 25]));
-            let fine = ctx.materials.add(StandardMaterial {
-                base_color_texture: Some(checker),
-                perceptual_roughness: 0.9,
-                uv_transform: Affine2::from_scale(Vec2::new(40.0, 12.0)),
-                ..default()
-            });
-            ctx.spawn_mesh(
-                Plane3d::default().mesh().size(16.0, 5.0),
-                fine.clone(),
-                Transform::from_xyz(0.0, 2.0, -3.0).with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
-            );
-            ctx.spawn_mesh(Plane3d::default().mesh().size(16.0, 8.0), fine, Transform::IDENTITY);
-            // Chain-link style fence of thin wires.
-            let wire = ctx.mat(Color::srgb(0.95, 0.85, 0.3), 0.4);
-            let vertical = ctx.meshes.add(Cylinder::new(0.006, 2.0));
-            let horizontal = ctx.meshes.add(Cylinder::new(0.006, 6.0));
-            ctx.commands
-                .spawn((Fence, Transform::default(), Visibility::default()))
-                .with_children(|fence| {
-                    for i in 0..=60 {
-                        fence.spawn((
-                            Mesh3d(vertical.clone()),
-                            MeshMaterial3d(wire.clone()),
-                            Transform::from_xyz(-3.0 + i as f32 * 0.1, 1.0, 0.0),
-                        ));
-                    }
-                    for j in 0..=20 {
-                        fence.spawn((
-                            Mesh3d(horizontal.clone()),
-                            MeshMaterial3d(wire.clone()),
-                            Transform::from_xyz(0.0, j as f32 * 0.1, 0.0)
-                                .with_rotation(Quat::from_rotation_z(FRAC_PI_2)),
-                        ));
-                    }
-                });
-            ctx.features
-                .push("fence slides sideways, driven by frame count (deterministic)".into());
-        }
-        SceneKind::ForwardControl => {
-            ctx.ambient(150.0);
-            ctx.sun(8_000.0, Vec3::new(-1.0, -1.1, -0.55), true);
-            ctx.shadow_props();
-            ctx.point_light_grid(4, 2, 2.2, Vec3::new(1.5, 0.4, 4.0), 60_000.0);
-        }
     }
 }
 
@@ -602,8 +502,8 @@ pub fn camera_extras(kind: SceneKind, variant: &Variant, ctx: &mut SceneCtx, cam
             ctx.features
                 .push("ScreenSpaceAmbientOcclusion (default) + NormalPrepass".into());
         }
-        SceneKind::Fog | SceneKind::ForwardControl => {
-            let (start, end) = if kind == SceneKind::Fog { (2.0, 28.0) } else { (6.0, 30.0) };
+        SceneKind::Fog => {
+            let (start, end) = (2.0, 28.0);
             cam.insert(DistanceFog {
                 color: Color::srgb(0.42, 0.55, 0.72),
                 falloff: FogFalloff::Linear { start, end },
@@ -621,20 +521,13 @@ pub fn camera_extras(kind: SceneKind, variant: &Variant, ctx: &mut SceneCtx, cam
             });
             ctx.features.push("Skybox (procedural labelled cubemap)".into());
         }
-        SceneKind::DeferredLighting | SceneKind::ClusteredLights | SceneKind::Taa => {}
+        SceneKind::DeferredLighting | SceneKind::ClusteredLights => {}
     }
     if variant.taa {
         ctx.commands
             .entity(camera)
             .insert(bevy::anti_alias::taa::TemporalAntiAliasing::default());
         ctx.features.push("TemporalAntiAliasing".into());
-    }
-}
-
-/// Frame-count driven animation (only the TAA scene moves).
-pub fn animate_fence(frame: u32, fences: &mut Query<&mut Transform, With<Fence>>) {
-    for mut t in fences.iter_mut() {
-        t.translation.x = 0.35 * (frame as f32 * 0.045).sin();
     }
 }
 
