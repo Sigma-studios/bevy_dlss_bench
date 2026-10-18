@@ -1,0 +1,4 @@
+[env]
+# Pinned DLSS SDK, fetched by `scripts/fetch-dlss-sdk.sh` (or `just sdk`).
+# dlss_wgpu 4.0.0 <-> DLSS SDK v310.5.3 <-> wgpu 29.
+DLSS_SDK = { value = "vendor/DLSS", relative = true }

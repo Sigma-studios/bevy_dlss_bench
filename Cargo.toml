@@ -1,0 +1,29 @@
+[package]
+name = "bevy_dlss_bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Screenshot harness isolating Bevy rendering features that break under DLSS (MainPassResolutionOverride)"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["dlss"]
+# Real DLSS through dlss_wgpu. Needs DLSS_SDK (vendor/DLSS, see scripts/fetch-dlss-sdk.sh),
+# VULKAN_SDK (shell.nix) and libclang. Build with `--no-default-features` on machines without
+# the SDK: every DLSS variant is then reported as "unsupported" and only native shots are made.
+dlss = ["bevy/dlss"]
+
+[dependencies]
+bevy = "=0.19.1"
+ab_glyph = "0.2"
+clap = { version = "4", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+debug = "line-tables-only"
