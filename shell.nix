@@ -18,7 +18,6 @@ in
 pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
     pkg-config
-    rustup
     just
     git
     clang
