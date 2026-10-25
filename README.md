@@ -12,7 +12,7 @@ image has a Bevy UI label, and the variants are then composed into comparison sh
 This repo is meant as the evidence for a Bevy issue or PR.
 
 Pinned versions: Bevy **0.20.0** (feature `dlss`), dlss_wgpu **6.0.0**, NVIDIA DLSS SDK
-**v310.9.1**, wgpu 30, Rust 1.97.1 (`rust-toolchain.toml`). Developed for NixOS + RTX 4070
+**v310.9.1**, wgpu 30, Rust 1.97.1 or newer (`rust-version` in `Cargo.toml`). Developed for NixOS + RTX 4070
 Super + Vulkan. Every bug below was checked to still be present in 0.20.0 and on `main`
 (2026-10-16).
 

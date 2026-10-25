@@ -2,6 +2,8 @@
 name = "bevy_dlss_bench"
 version = "0.1.0"
 edition = "2024"
+# Bevy 0.20 requires rustc 1.97.1.
+rust-version = "1.97.1"
 publish = false
 description = "Screenshot harness isolating Bevy rendering features that break under DLSS (MainPassResolutionOverride)"
 license = "MIT OR Apache-2.0"
